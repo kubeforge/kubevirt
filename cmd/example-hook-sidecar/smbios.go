@@ -27,12 +27,17 @@ import (
 	"os"
 
 	"google.golang.org/grpc"
+	"k8s.io/client-go/tools/cache"
 
 	vmSchema "kubevirt.io/kubevirt/pkg/api/v1"
+	"kubevirt.io/kubevirt/pkg/controller"
 	hooks "kubevirt.io/kubevirt/pkg/hooks"
 	hooksInfo "kubevirt.io/kubevirt/pkg/hooks/info"
 	hooksV1alpha1 "kubevirt.io/kubevirt/pkg/hooks/v1alpha1"
+	"kubevirt.io/kubevirt/pkg/kubecli"
 	"kubevirt.io/kubevirt/pkg/log"
+	"kubevirt.io/kubevirt/pkg/util"
+	virtconfig "kubevirt.io/kubevirt/pkg/virt-config"
 	domainSchema "kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
 
@@ -113,6 +118,10 @@ func (s v1alpha1Server) OnDefineDomain(ctx context.Context, params *hooksV1alpha
 	}, nil
 }
 
+func updateVirtualMachine(old, curr interface{}) {
+	log.Log.Infof("Update received %s %s", old, curr)
+}
+
 func main() {
 	log.InitializeLogging("smbios-hook-sidecar")
 
@@ -124,6 +133,31 @@ func main() {
 		panic(err)
 	}
 	defer os.Remove(socketPath)
+
+	log.Log.Info("Init Informer")
+	log.Log.Info("Get Client")
+	virtconfig.Init()
+	clientSet, err := kubecli.GetKubevirtClient()
+	if err != nil {
+		panic(err)
+	}
+	log.Log.Info("Client init done")
+	restClient := clientSet.RestClient()
+
+	kubevirtNamespace, err := util.GetNamespace()
+	if err != nil {
+		panic(err)
+	}
+	informerVMI := controller.NewKubeInformerFactory(restClient, clientSet, kubevirtNamespace).VMI()
+	stopper := make(chan struct{})
+	defer close(stopper)
+
+	informerVMI.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: updateVirtualMachine,
+	})
+	log.Log.Info("Init Informer done")
+	informerVMI.Run(stopper)
+	log.Log.Info("Informer started...")
 
 	server := grpc.NewServer([]grpc.ServerOption{}...)
 	hooksInfo.RegisterInfoServer(server, infoServer{})
