@@ -50,6 +50,10 @@ func (s infoServer) Info(ctx context.Context, params *hooksInfo.InfoParams) (*ho
 				Name:     hooksInfo.PreCloudInitIsoHookPointName,
 				Priority: 0,
 			},
+			&hooksInfo.HookPoint{
+				Name:     hooksInfo.OnSyncVMIHookPointName,
+				Priority: 1,
+			},
 		},
 	}, nil
 }
@@ -60,6 +64,13 @@ func (s v1alpha2Server) OnDefineDomain(ctx context.Context, params *hooksV1alpha
 	log.Log.Warning("Hook's OnDefineDomain callback method has been called which should never happen")
 	return &hooksV1alpha2.OnDefineDomainResult{
 		DomainXML: params.GetDomainXML(),
+	}, nil
+}
+
+func (s v1alpha2Server) OnSyncVMI(ctx context.Context, params *hooksV1alpha2.OnSyncVMIParams) (*hooksV1alpha2.OnSyncVMIResult, error) {
+	log.Log.Warning("Hook's OnSyncVMI callback method has been called!!!11")
+	return &hooksV1alpha2.OnSyncVMIResult{
+		NewDomainXML: params.GetNewDomainXML(),
 	}, nil
 }
 

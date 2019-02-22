@@ -132,6 +132,7 @@ func (p *AgentPoller) GetInterfaceStatuses(cmdResult string) []api.InterfaceStat
 
 func (p *AgentPoller) UpdateDomain(domain *api.Domain) {
 	if domain != nil {
+		log.Log.Infof("======= received domain: %v\n", domain)
 		select {
 		case p.domainUpdate <- domain:
 		default:

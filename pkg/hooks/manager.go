@@ -196,18 +196,70 @@ func (m *Manager) OnDefineDomain(domainSpec *virtwrapApi.DomainSpec, vmi *v1.Vir
 				}
 				defer conn.Close()
 
-				client := hooksV1alpha1.NewCallbacksClient(conn)
+				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cancel()
+
+				if callback.Version == hooksV1alpha1.Version {
+					client := hooksV1alpha1.NewCallbacksClient(conn)
+					result, err := client.OnDefineDomain(ctx, &hooksV1alpha1.OnDefineDomainParams{
+						DomainXML: domainSpecXML,
+						Vmi:       vmiJSON,
+					})
+					if err != nil {
+						return "", err
+					}
+					domainSpecXML = result.GetDomainXML()
+				} else {
+					client := hooksV1alpha2.NewCallbacksClient(conn)
+					result, err := client.OnDefineDomain(ctx, &hooksV1alpha2.OnDefineDomainParams{
+						DomainXML: domainSpecXML,
+						Vmi:       vmiJSON,
+					})
+					if err != nil {
+						return "", err
+					}
+					domainSpecXML = result.GetDomainXML()
+				}
+			} else {
+				panic("Should never happen, version compatibility check is done during Info call")
+			}
+		}
+	}
+	return string(domainSpecXML), nil
+}
+
+func (m *Manager) OnSyncVMI(domainSpec *virtwrapApi.DomainSpec, vmi *v1.VirtualMachineInstance) (string, error) {
+	domainSpecXML, err := xml.Marshal(domainSpec)
+	if err != nil {
+		return "", fmt.Errorf("Failed to marshal domain spec: %v", domainSpec)
+	}
+	if callbacks, found := m.callbacksPerHookPoint[hooksInfo.OnSyncVMIHookPointName]; found {
+		for _, callback := range callbacks {
+			if callback.Version == hooksV1alpha2.Version {
+				vmiJSON, err := json.Marshal(vmi)
+				if err != nil {
+					return "", fmt.Errorf("Failed to marshal VMI spec: %v", vmi)
+				}
+
+				conn, err := dialSocket(callback.SocketPath)
+				if err != nil {
+					log.Log.Reason(err).Infof("Failed to Dial hook socket: %s", callback.SocketPath)
+					return "", err
+				}
+				defer conn.Close()
+
+				client := hooksV1alpha2.NewCallbacksClient(conn)
 
 				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 				defer cancel()
-				result, err := client.OnDefineDomain(ctx, &hooksV1alpha1.OnDefineDomainParams{
-					DomainXML: domainSpecXML,
-					Vmi:       vmiJSON,
+				result, err := client.OnSyncVMI(ctx, &hooksV1alpha2.OnSyncVMIParams{
+					NewDomainXML: domainSpecXML,
+					Vmi:          vmiJSON,
 				})
 				if err != nil {
 					return "", err
 				}
-				domainSpecXML = result.GetDomainXML()
+				domainSpecXML = result.GetNewDomainXML()
 			} else {
 				panic("Should never happen, version compatibility check is done during Info call")
 			}

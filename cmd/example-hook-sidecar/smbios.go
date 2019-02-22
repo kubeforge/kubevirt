@@ -23,15 +23,17 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"net"
 	"os"
 
 	"google.golang.org/grpc"
 
+	v1 "kubevirt.io/kubevirt/pkg/api/v1"
 	vmSchema "kubevirt.io/kubevirt/pkg/api/v1"
 	hooks "kubevirt.io/kubevirt/pkg/hooks"
 	hooksInfo "kubevirt.io/kubevirt/pkg/hooks/info"
-	hooksV1alpha1 "kubevirt.io/kubevirt/pkg/hooks/v1alpha1"
+	hooksv1alpha2 "kubevirt.io/kubevirt/pkg/hooks/v1alpha2"
 	"kubevirt.io/kubevirt/pkg/log"
 	domainSchema "kubevirt.io/kubevirt/pkg/virt-launcher/virtwrap/api"
 )
@@ -46,20 +48,30 @@ func (s infoServer) Info(ctx context.Context, params *hooksInfo.InfoParams) (*ho
 	return &hooksInfo.InfoResult{
 		Name: "smbios",
 		Versions: []string{
-			hooksV1alpha1.Version,
+			hooksv1alpha2.Version,
 		},
 		HookPoints: []*hooksInfo.HookPoint{
 			&hooksInfo.HookPoint{
 				Name:     hooksInfo.OnDefineDomainHookPointName,
 				Priority: 0,
 			},
+			&hooksInfo.HookPoint{
+				Name:     hooksInfo.OnSyncVMIHookPointName,
+				Priority: 1,
+			},
+			&hooksInfo.HookPoint{
+				Name:     hooksInfo.PreCloudInitIsoHookPointName,
+				Priority: 1,
+			},
 		},
 	}, nil
 }
 
-type v1alpha1Server struct{}
+type v1alpha2Server struct{}
 
-func (s v1alpha1Server) OnDefineDomain(ctx context.Context, params *hooksV1alpha1.OnDefineDomainParams) (*hooksV1alpha1.OnDefineDomainResult, error) {
+var initalAnnotation = ""
+
+func (s v1alpha2Server) OnDefineDomain(ctx context.Context, params *hooksv1alpha2.OnDefineDomainParams) (*hooksv1alpha2.OnDefineDomainResult, error) {
 	log.Log.Info("Hook's OnDefineDomain callback method has been called")
 
 	vmiJSON := params.GetVmi()
@@ -74,10 +86,12 @@ func (s v1alpha1Server) OnDefineDomain(ctx context.Context, params *hooksV1alpha
 
 	if _, found := annotations[baseBoardManufacturerAnnotation]; !found {
 		log.Log.Info("SM BIOS hook sidecar was requested, but no attributes provided. Returning original domain spec")
-		return &hooksV1alpha1.OnDefineDomainResult{
+		return &hooksv1alpha2.OnDefineDomainResult{
 			DomainXML: params.GetDomainXML(),
 		}, nil
 	}
+
+	initalAnnotation = annotations[baseBoardManufacturerAnnotation]
 
 	domainXML := params.GetDomainXML()
 	domainSpec := domainSchema.DomainSpec{}
@@ -108,8 +122,64 @@ func (s v1alpha1Server) OnDefineDomain(ctx context.Context, params *hooksV1alpha
 
 	log.Log.Info("Successfully updated original domain spec with requested SMBIOS attributes")
 
-	return &hooksV1alpha1.OnDefineDomainResult{
+	return &hooksv1alpha2.OnDefineDomainResult{
 		DomainXML: newDomainXML,
+	}, nil
+}
+
+func (s v1alpha2Server) OnSyncVMI(ctx context.Context, params *hooksv1alpha2.OnSyncVMIParams) (*hooksv1alpha2.OnSyncVMIResult, error) {
+	log.Log.Warning("Hook's OnSyncVMI callback method has been called!!!11")
+	vmiSpec := vmSchema.VirtualMachineInstance{}
+	annotations := vmiSpec.GetAnnotations()
+
+	if _, found := annotations[baseBoardManufacturerAnnotation]; !found {
+		log.Log.Info("SM BIOS hook sidecar was requested, but no attributes provided. Returning original domain spec")
+		return &hooksv1alpha2.OnSyncVMIResult{
+			NewDomainXML: params.GetNewDomainXML(),
+		}, nil
+	}
+
+	if annotations[baseBoardManufacturerAnnotation] != initalAnnotation {
+		log.Log.Warning("Annotation changed - need to update XML!")
+	}
+
+	return &hooksv1alpha2.OnSyncVMIResult{
+		NewDomainXML: params.GetNewDomainXML(),
+	}, nil
+}
+
+func (s v1alpha2Server) PreCloudInitIso(ctx context.Context, params *hooksv1alpha2.PreCloudInitIsoParams) (*hooksv1alpha2.PreCloudInitIsoResult, error) {
+	log.Log.Info("Hook's PreCloudInitIso callback method has been called")
+
+	vmiJSON := params.GetVmi()
+	vmi := v1.VirtualMachineInstance{}
+	err := json.Unmarshal(vmiJSON, &vmi)
+	if err != nil {
+		log.Log.Reason(err).Errorf("Failed to unmarshal given VMI spec: %s", vmiJSON)
+		panic(err)
+	}
+
+	cloudInitDataJSON := params.GetCloudInitData()
+	cloudInitData := v1.CloudInitNoCloudSource{}
+	err = json.Unmarshal(cloudInitDataJSON, &cloudInitData)
+	if err != nil {
+		log.Log.Reason(err).Errorf("Failed to unmarshal given CloudInitNoCloudSource: %s", cloudInitDataJSON)
+		panic(err)
+	}
+
+	cloudInitData.UserData = "#cloud-config\n"
+	cloudInitData.UserDataBase64 = ""
+
+	response, err := json.Marshal(cloudInitData)
+	if err != nil {
+		return &hooksv1alpha2.PreCloudInitIsoResult{
+			CloudInitData: params.GetCloudInitData(),
+		}, fmt.Errorf("Failed to marshal CloudInitNoCloudSource: %v", cloudInitData)
+
+	}
+
+	return &hooksv1alpha2.PreCloudInitIsoResult{
+		CloudInitData: response,
 	}, nil
 }
 
@@ -127,7 +197,7 @@ func main() {
 
 	server := grpc.NewServer([]grpc.ServerOption{}...)
 	hooksInfo.RegisterInfoServer(server, infoServer{})
-	hooksV1alpha1.RegisterCallbacksServer(server, v1alpha1Server{})
-	log.Log.Infof("Starting hook server exposing 'info' and 'v1alpha1' services on socket %s", socketPath)
+	hooksv1alpha2.RegisterCallbacksServer(server, v1alpha2Server{})
+	log.Log.Infof("Starting hook server exposing 'info' and 'v1alpha2' services on socket %s", socketPath)
 	server.Serve(socket)
 }

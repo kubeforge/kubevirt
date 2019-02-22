@@ -675,6 +675,12 @@ func (l *LibvirtDomainManager) SyncVMI(vmi *v1.VirtualMachineInstance, useEmulat
 		return nil, err
 	}
 
+	_, err = l.updateDomainSpecWithHooks(vmi, &domain.Spec)
+	if err != nil {
+		logger.Reason(err).Error("executing custom sync hooks failed: %v")
+	}
+	//defer dom2.Free()
+
 	// To make sure, that we set the right qemu wrapper arguments,
 	// we update the domain XML whenever a VirtualMachineInstance was already defined but not running
 	if !newDomain && cli.IsDown(domState) {
@@ -925,4 +931,20 @@ func (l *LibvirtDomainManager) GetDomainStats() ([]*stats.DomainStats, error) {
 	flags := libvirt.CONNECT_GET_ALL_DOMAINS_STATS_RUNNING
 
 	return l.virConn.GetDomainStats(statsTypes, flags)
+}
+
+func (l *LibvirtDomainManager) updateDomainSpecWithHooks(vmi *v1.VirtualMachineInstance, spec *api.DomainSpec) (cli.VirDomain, error) {
+	logger := log.Log.Object(vmi)
+	logger.Info("Get manager")
+	hooksManager := hooks.GetManager()
+	logger.Info("Call Sync")
+	//domainSpec, err := hooksManager.OnSyncVMI(spec, vmi)
+	_, err := hooksManager.OnSyncVMI(spec, vmi)
+	if err != nil {
+		logger.Info("Error")
+		return nil, err
+	}
+	logger.Info("Set XML")
+	return nil, err
+	//return util.SetDomainSpecStr(l.virConn, vmi, domainSpec)
 }

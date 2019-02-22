@@ -3,7 +3,7 @@ apiVersion: kubevirt.io/v1alpha3
 kind: VirtualMachineInstance
 metadata:
   annotations:
-    hooks.kubevirt.io/hookSidecars: '[{"image": "registry:5000/kubevirt/example-hook-sidecar:devel"}]'
+    hooks.kubevirt.io/hookSidecars: '[{"image": "dreamrocker/example-hook-sidecar:wip"}]'
     smbios.vm.kubevirt.io/baseBoardManufacturer: Radical Edward
   labels:
     special: vmi-with-sidecar-hook
@@ -26,7 +26,7 @@ spec:
   terminationGracePeriodSeconds: 0
   volumes:
   - containerDisk:
-      image: registry:5000/kubevirt/fedora-cloud-container-disk-demo:devel
+      image: dreamrocker/fedora-cloud-container-disk-demo:wip
     name: containerdisk
   - cloudInitNoCloud:
       userData: |-
